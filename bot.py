@@ -2,12 +2,13 @@ import os
 import json
 import random
 import time
-from datetime import datetime, timedelta
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update
-from telegram.ext import Updater, CommandHandler, CallbackQueryHandler, CallbackContext
+from flask import Flask, request
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Bot
+from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
+from telegram.utils.request import Request
 
-# ✅ Bot Config
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
+# ✅ Config
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 CHANNEL_USERNAME = "@grandlakeofficial"
 ADMIN_ID = 6059977122  # তোমার আইডি
 DATA_FILE = "users.json"
@@ -24,6 +25,11 @@ def save_all():
     json.dump(withdraw_requests, open(WITHDRAW_FILE, "w"))
     json.dump(promo_codes, open(PROMO_FILE, "w"))
 
+# ✅ Bot & Flask App
+app = Flask(__name__)
+bot = Bot(token=BOT_TOKEN)
+dispatcher = Dispatcher(bot, None, workers=0)
+
 # ✅ Force Subscribe Check
 def is_member(user_id, context):
     try:
@@ -36,9 +42,8 @@ def is_member(user_id, context):
 def start(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
     username = update.effective_user.username or "User"
-
-    # Referral
     ref_id = context.args[0] if len(context.args) > 0 else None
+
     if user_id not in users_data:
         users_data[user_id] = {"coins": 0, "referrals": 0, "last_daily": 0}
         if ref_id and ref_id != user_id and ref_id in users_data:
@@ -125,59 +130,3 @@ def admin(update: Update, context: CallbackContext):
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = str(query.from_user.id)
-
-    if query.data == "collect_coins":
-        users_data[user_id]["coins"] += 10
-        save_all()
-        query.edit_message_text(f"🎉 10 Coins যোগ হয়েছে!\nTotal: {users_data[user_id]['coins']}")
-    
-    elif query.data == "check_balance":
-        coins = users_data[user_id]["coins"]
-        refs = users_data[user_id]["referrals"]
-        query.edit_message_text(f"💰 Coins: {coins}\n👥 Referrals: {refs}")
-    
-    elif query.data == "leaderboard":
-        sorted_users = sorted(users_data.items(), key=lambda x: x[1]["coins"], reverse=True)[:5]
-        lb = "\n".join([f"{i+1}. User {uid[-4:]} - {data['coins']} coins" for i, (uid, data) in enumerate(sorted_users)])
-        query.edit_message_text(f"🏆 Leaderboard:\n{lb}")
-
-    elif query.data == "lucky_spin":
-        reward = random.choice([0, 10, 20, 50, 100])
-        users_data[user_id]["coins"] += reward
-        save_all()
-        query.edit_message_text(f"🎲 Lucky Spin Result: +{reward} coins!")
-
-    elif query.data == "guess_game":
-        number = random.randint(1, 5)
-        reward = 50 if number == 3 else 0
-        users_data[user_id]["coins"] += reward
-        save_all()
-        query.edit_message_text(f"🔢 You guessed! Secret: {number}. Reward: +{reward} coins!")
-
-    elif query.data == "withdraw":
-        if users_data[user_id]["coins"] >= 100:
-            withdraw_requests.append({"user_id": user_id, "amount": 100})
-            users_data[user_id]["coins"] -= 100
-            save_all()
-            query.edit_message_text("✅ Withdraw Request Sent!")
-        else:
-            query.edit_message_text("❌ 100 coins দরকার!")
-
-# ✅ Main
-def main():
-    updater = Updater(BOT_TOKEN)
-    dp = updater.dispatcher
-
-    dp.add_handler(CommandHandler("start", start))
-    dp.add_handler(CommandHandler("daily", daily))
-    dp.add_handler(CommandHandler("profile", profile))
-    dp.add_handler(CommandHandler("redeem", redeem))
-    dp.add_handler(CommandHandler("createpromo", create_promo))
-    dp.add_handler(CommandHandler("admin", admin))
-    dp.add_handler(CallbackQueryHandler(button_handler))
-
-    updater.start_polling()
-    updater.idle()
-
-if __name__ == "__main__":
-    main()
