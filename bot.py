@@ -7,7 +7,6 @@ from telegram import InlineKeyboardButton, InlineKeyboardMarkup, Update, Bot
 from telegram.ext import Dispatcher, CommandHandler, CallbackQueryHandler, CallbackContext
 from telegram.utils.request import Request
 
-# ✅ Config
 BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 CHANNEL_USERNAME = "@grandlakeofficial"
 ADMIN_ID = 6059977122  # তোমার আইডি
@@ -15,7 +14,6 @@ DATA_FILE = "users.json"
 WITHDRAW_FILE = "withdraw.json"
 PROMO_FILE = "promo.json"
 
-# ✅ Load Data
 users_data = json.load(open(DATA_FILE)) if os.path.exists(DATA_FILE) else {}
 withdraw_requests = json.load(open(WITHDRAW_FILE)) if os.path.exists(WITHDRAW_FILE) else []
 promo_codes = json.load(open(PROMO_FILE)) if os.path.exists(PROMO_FILE) else {}
@@ -25,12 +23,12 @@ def save_all():
     json.dump(withdraw_requests, open(WITHDRAW_FILE, "w"))
     json.dump(promo_codes, open(PROMO_FILE, "w"))
 
-# ✅ Bot & Flask App
 app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
-dispatcher = Dispatcher(bot, None, workers=0)
 
-# ✅ Force Subscribe Check
+# Dispatcher with worker threads (workers=4) for async callbacks
+dispatcher = Dispatcher(bot, None, workers=4, use_context=True)
+
 def is_member(user_id, context):
     try:
         member = context.bot.get_chat_member(CHANNEL_USERNAME, user_id)
@@ -38,7 +36,6 @@ def is_member(user_id, context):
     except:
         return False
 
-# ✅ Start Command
 def start(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
     username = update.effective_user.username or "User"
@@ -70,7 +67,6 @@ def start(update: Update, context: CallbackContext):
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
-# ✅ Daily Bonus
 def daily(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
     now = int(time.time())
@@ -82,14 +78,12 @@ def daily(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("❌ আপনি আজকে বোনাস নিয়েছেন। কাল চেষ্টা করুন!")
 
-# ✅ Profile
 def profile(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
     coins = users_data[user_id]["coins"]
     refs = users_data[user_id]["referrals"]
     update.message.reply_text(f"👤 Profile:\n💰 Coins: {coins}\n👥 Referrals: {refs}")
 
-# ✅ Promo Code
 def redeem(update: Update, context: CallbackContext):
     user_id = str(update.effective_user.id)
     code = context.args[0] if len(context.args) > 0 else None
@@ -101,7 +95,6 @@ def redeem(update: Update, context: CallbackContext):
     else:
         update.message.reply_text("❌ Invalid Promo Code!")
 
-# ✅ Admin: Create Promo
 def create_promo(update: Update, context: CallbackContext):
     if update.effective_user.id != ADMIN_ID:
         update.message.reply_text("❌ Access Denied")
@@ -114,7 +107,6 @@ def create_promo(update: Update, context: CallbackContext):
     except:
         update.message.reply_text("❌ Usage: /createpromo CODE AMOUNT")
 
-# ✅ Admin Panel
 def admin(update: Update, context: CallbackContext):
     if update.effective_user.id != ADMIN_ID:
         update.message.reply_text("❌ Access Denied")
@@ -126,7 +118,67 @@ def admin(update: Update, context: CallbackContext):
     ]
     update.message.reply_text("✅ Admin Panel:", reply_markup=InlineKeyboardMarkup(keyboard))
 
-# ✅ Button Handler
 def button_handler(update: Update, context: CallbackContext):
     query = update.callback_query
     user_id = str(query.from_user.id)
+
+    if query.data == "collect_coins":
+        users_data[user_id]["coins"] += 10
+        save_all()
+        query.edit_message_text(f"🎉 10 Coins যোগ হয়েছে!\nTotal: {users_data[user_id]['coins']}")
+    
+    elif query.data == "check_balance":
+        coins = users_data[user_id]["coins"]
+        refs = users_data[user_id]["referrals"]
+        query.edit_message_text(f"💰 Coins: {coins}\n👥 Referrals: {refs}")
+    
+    elif query.data == "leaderboard":
+        sorted_users = sorted(users_data.items(), key=lambda x: x[1]["coins"], reverse=True)[:5]
+        lb = "\n".join([f"{i+1}. User {uid[-4:]} - {data['coins']} coins" for i, (uid, data) in enumerate(sorted_users)])
+        query.edit_message_text(f"🏆 Leaderboard:\n{lb}")
+
+    elif query.data == "lucky_spin":
+        reward = random.choice([0, 10, 20, 50, 100])
+        users_data[user_id]["coins"] += reward
+        save_all()
+        query.edit_message_text(f"🎲 Lucky Spin Result: +{reward} coins!")
+
+    elif query.data == "guess_game":
+        number = random.randint(1, 5)
+        reward = 50 if number == 3 else 0
+        users_data[user_id]["coins"] += reward
+        save_all()
+        query.edit_message_text(f"🔢 You guessed! Secret: {number}. Reward: +{reward} coins!")
+
+    elif query.data == "withdraw":
+        if users_data[user_id]["coins"] >= 100:
+            withdraw_requests.append({"user_id": user_id, "amount": 100})
+            users_data[user_id]["coins"] -= 100
+            save_all()
+            query.edit_message_text("✅ Withdraw Request Sent!")
+        else:
+            query.edit_message_text("❌ 100 coins দরকার!")
+
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(CommandHandler("daily", daily))
+dispatcher.add_handler(CommandHandler("profile", profile))
+dispatcher.add_handler(CommandHandler("redeem", redeem))
+dispatcher.add_handler(CommandHandler("createpromo", create_promo))
+dispatcher.add_handler(CommandHandler("admin", admin))
+dispatcher.add_handler(CallbackQueryHandler(button_handler))
+
+@app.route(f"/{BOT_TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return "ok", 200
+
+@app.route("/")
+def index():
+    return "Bot is running!", 200
+
+if __name__ == "__main__":
+    PORT = int(os.environ.get("PORT", 5000))
+    bot.delete_webhook()
+    bot.set_webhook(url=f"https://{os.environ.get('RENDER_EXTERNAL_HOSTNAME')}/{BOT_TOKEN}")
+    app.run(host="0.0.0.0", port=PORT)
